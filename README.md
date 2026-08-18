@@ -74,6 +74,22 @@ AI Internship Agent/
 
 
 
+## Internship sources
+
+The ingestion pipeline accepts any scraper-like object that exposes a `scraper()` method returning raw internship dictionaries. The existing local mock dataset remains available through `MockScraper`, and the new Apify source can be plugged in without changing the rest of the RAG stack.
+
+### Apify dataset
+
+Set the following environment variables to enable the external source:
+
+```ini
+APIFY_API_TOKEN=your_apify_token
+APIFY_DATASET_ID=your_dataset_id
+APIFY_BASE_URL=https://api.apify.com/v2
+```
+
+The scraper fetches the dataset items from Apify, normalizes them to the existing `InternshipJob` contract, and then hands the records to the same ingestion, embedding, and Chroma flow already used by the mock dataset.
+
 ## Vector store
 
 The RAG layer talks to ChromaDB in one of two modes, selected by `CHROMA_MODE`.

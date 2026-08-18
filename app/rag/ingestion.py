@@ -9,6 +9,7 @@ from app.rag.config import RAGConfig
 from app.rag.embeddings import EmbeddingService, OllamaEmbeddingService
 from app.rag.vector_store import ChromaVectorStore, VectorStore
 from app.scraper.mocker_scraper import MockScraper
+from app.scraper.apify_scraper import ApifyScraper
 from app.schemas.rag import InternshipJob
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,29 @@ class JobSource(Protocol):
 
     def scraper(self) -> list[dict]:
         """Return raw internship records."""
+class CombinedJobSource:
+    """Combine mock and Apify internship sources."""
 
+    def __init__(self) -> None:
+        self.mock_scraper = MockScraper()
+        self.apify_scraper = ApifyScraper()
+
+    def scraper(self) -> list[dict]:
+        jobs: list[dict] = []
+
+        # Load sample/mock internships
+        try:
+            jobs.extend(self.mock_scraper.scraper())
+        except Exception as exc:
+            logger.warning("Mock scraper failed: %s", exc)
+
+        # Load Apify internships
+        try:
+            jobs.extend(self.apify_scraper.scraper())
+        except Exception as exc:
+            logger.warning("Apify scraper failed: %s", exc)
+
+        return jobs
 
 class IngestionPipeline:
     """Load jobs, create embeddings, and persist them."""
@@ -34,7 +57,7 @@ class IngestionPipeline:
         vector_store: VectorStore | None = None,
     ) -> None:
         self._config = config or RAGConfig()
-        self._job_source = job_source or MockScraper()
+        self._job_source = job_source or CombinedJobSource()
         self._embeddings = embedding_service or OllamaEmbeddingService(self._config)
         self._store = vector_store or ChromaVectorStore(self._config)
 
