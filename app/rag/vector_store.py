@@ -40,6 +40,10 @@ class VectorStore(ABC):
         """Return the stored document count."""
 
     @abstractmethod
+    def get_stats(self) -> dict[str, Any]:
+        """Return collection statistics such as total count and source breakdown."""
+
+    @abstractmethod
     def reset(self) -> None:
         """Delete and recreate the collection."""
 
@@ -65,6 +69,8 @@ class ChromaVectorStore(VectorStore):
         metadatas: list[dict[str, str]],
     ) -> None:
         """Insert or update vectors."""
+        if not ids:
+            return
         self._collection.upsert(
             ids=ids,
             embeddings=embeddings,
@@ -91,6 +97,27 @@ class ChromaVectorStore(VectorStore):
     def count(self) -> int:
         """Return the stored document count."""
         return self._collection.count()
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return collection statistics."""
+        total = self.count()
+        if total == 0:
+            return {"total_count": 0, "sources": {}}
+
+        try:
+            items = self._collection.get(include=["metadatas"])
+            source_counts: dict[str, int] = {}
+            for meta in items.get("metadatas", []):
+                if meta:
+                    source = meta.get("source", "unknown")
+                    source_counts[source] = source_counts.get(source, 0) + 1
+            return {
+                "total_count": total,
+                "collection_name": self._collection_name,
+                "sources": source_counts,
+            }
+        except Exception:
+            return {"total_count": total, "collection_name": self._collection_name, "sources": {}}
 
     def reset(self) -> None:
         """Delete and recreate the collection."""

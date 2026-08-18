@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 from app.rag.exceptions import InvalidVectorStoreConfigError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -20,10 +27,14 @@ SUPPORTED_CHROMA_MODES: frozenset[str] = frozenset({EMBEDDED_MODE, HTTP_MODE})
 DEFAULT_CHROMA_MODE: ChromaMode = HTTP_MODE
 DEFAULT_CHROMA_HOST = "localhost"
 DEFAULT_CHROMA_PORT = 6333
+DEFAULT_EMBEDDING_MODEL = "mxbai-embed-large"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 CHROMA_MODE_ENV_VAR = "CHROMA_MODE"
 CHROMA_HOST_ENV_VAR = "CHROMA_HOST"
 CHROMA_PORT_ENV_VAR = "CHROMA_PORT"
+EMBEDDING_MODEL_ENV_VAR = "EMBEDDING_MODEL"
+OLLAMA_BASE_URL_ENV_VAR = "OLLAMA_BASE_URL"
 
 
 def _resolve_chroma_mode() -> ChromaMode:
@@ -51,8 +62,12 @@ def _resolve_chroma_port() -> int:
 class RAGConfig:
     """Central configuration for embedding, storage, and retrieval."""
 
-    embedding_model: str = "mxbai-embed-large"
-    ollama_base_url: str = "http://localhost:11434"
+    embedding_model: str = field(
+        default_factory=lambda: os.getenv(EMBEDDING_MODEL_ENV_VAR, DEFAULT_EMBEDDING_MODEL)
+    )
+    ollama_base_url: str = field(
+        default_factory=lambda: os.getenv(OLLAMA_BASE_URL_ENV_VAR, DEFAULT_OLLAMA_BASE_URL)
+    )
     collection_name: str = "internships"
     persist_dir: Path = PROJECT_ROOT / "vector_db"
     default_top_k: int = 5

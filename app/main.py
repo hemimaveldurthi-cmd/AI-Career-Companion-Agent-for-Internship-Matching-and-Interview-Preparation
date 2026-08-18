@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth_router
+from app.api import auth_router, internships_router
 from app.core.config import get_settings
 from app.database.connection import init_db
 
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(auth_router)
+    app.include_router(internships_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

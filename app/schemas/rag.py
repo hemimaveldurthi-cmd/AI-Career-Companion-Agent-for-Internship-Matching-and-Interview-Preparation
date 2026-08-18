@@ -28,6 +28,8 @@ class InternshipJob(BaseModel):
     def _normalize_skills(cls, value: Any) -> list[str]:
         if value is None:
             return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
         return [str(skill).strip() for skill in value if str(skill).strip()]
 
     @property
@@ -80,3 +82,79 @@ class SearchResult(BaseModel):
     document: str
     metadata: dict[str, str]
     job: InternshipJob | None = None
+
+
+class SearchRequest(BaseModel):
+    """Request payload for semantic internship search."""
+
+    query: str
+    top_k: int = Field(default=5, ge=1, le=50)
+    filters: dict[str, Any] | None = None
+    skills: list[str] | None = None
+    location: str | None = None
+    company: str | None = None
+    source: str | None = None
+
+
+class SearchResponse(BaseModel):
+    """Response payload containing matching internship search results."""
+
+    query: str
+    count: int
+    results: list[SearchResult]
+
+
+class ChatRequest(BaseModel):
+    """Request payload for conversational internship career assistant."""
+
+    query: str
+    top_k: int = Field(default=5, ge=1, le=20)
+    source: str | None = None
+
+
+class MatchedInternship(BaseModel):
+    """Structured internship summary returned by the chatbot."""
+
+    id: str
+    title: str
+    company: str
+    location: str
+    stipend: str
+    duration: str
+    skills: list[str]
+    apply_url: str
+    source: str
+    relevance_score: float
+
+
+class ChatResponseSchema(BaseModel):
+    """Conversational answer response payload."""
+
+    query: str
+    message: str
+    results_count: int
+    matched_internships: list[MatchedInternship] = Field(default_factory=list)
+
+
+class IngestRequest(BaseModel):
+    """Request payload to trigger data ingestion."""
+
+    reset: bool = False
+    source: str = "all"  # "all", "mock", "apify"
+
+
+class IngestResponse(BaseModel):
+    """Response payload from ingestion pipeline."""
+
+    status: str
+    indexed_count: int
+    source: str
+    collection_name: str
+
+
+class CollectionStatsResponse(BaseModel):
+    """Response payload for collection status."""
+
+    total_count: int
+    collection_name: str
+    sources: dict[str, int]

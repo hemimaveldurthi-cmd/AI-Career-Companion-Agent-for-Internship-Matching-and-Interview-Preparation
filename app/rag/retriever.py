@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 from app.rag.config import RAGConfig
 from app.rag.embeddings import EmbeddingService, OllamaEmbeddingService
 from app.rag.vector_store import ChromaVectorStore, VectorStore
@@ -27,7 +34,7 @@ class InternshipRetriever:
         self,
         query: str,
         top_k: int | None = None,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Return internships semantically similar to a query."""
         result_limit = top_k or self._config.default_top_k
@@ -43,18 +50,45 @@ class InternshipRetriever:
         self,
         skills: list[str],
         top_k: int | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Search for internships mentioning the supplied skills."""
         query = f"Internship requiring skills: {', '.join(skills)}"
-        return self.search(query, top_k=top_k)
+        return self.search(query, top_k=top_k, filters=filters)
 
     def search_by_location(
         self,
         location: str,
         top_k: int | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
-        """Search for internships in a location."""
-        return self.search(f"Internship in {location}", top_k=top_k)
+        """Search for internships in a specific location."""
+        return self.search(f"Internship in {location}", top_k=top_k, filters=filters)
+
+    def search_by_company(
+        self,
+        company: str,
+        top_k: int | None = None,
+    ) -> list[SearchResult]:
+        """Search for internships offered by a specific company."""
+        return self.search(
+            f"Internship at {company}",
+            top_k=top_k,
+            filters={"company": company} if company else None,
+        )
+
+    def search_by_source(
+        self,
+        query: str,
+        source: str,
+        top_k: int | None = None,
+    ) -> list[SearchResult]:
+        """Search for internships from a specific source (e.g. 'apify' or 'mock')."""
+        return self.search(query, top_k=top_k, filters={"source": source})
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return collection statistics."""
+        return self._store.get_stats()
 
     def _parse_results(self, raw_results: dict[str, Any]) -> list[SearchResult]:
         identifiers = raw_results.get("ids", [[]])[0]
@@ -73,10 +107,12 @@ class InternshipRetriever:
                 key: str(value)
                 for key, value in (raw_metadata or {}).items()
             }
+            # Cosine distance ranges from 0 (identical) to 2 (opposite)
+            score = max(0.0, 1.0 - float(distance))
             results.append(
                 SearchResult(
                     job_id=job_id,
-                    score=1.0 - float(distance),
+                    score=round(score, 4),
                     document=document or "",
                     metadata=metadata,
                     job=_metadata_to_job(metadata) if metadata else None,

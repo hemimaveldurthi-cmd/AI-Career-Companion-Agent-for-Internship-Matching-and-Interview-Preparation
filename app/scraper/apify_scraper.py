@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import httpx
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
 
 APIFY_API_TOKEN_ENV_VAR = "APIFY_API_TOKEN"
 APIFY_DATASET_ID_ENV_VAR = "APIFY_DATASET_ID"
@@ -14,14 +22,39 @@ APIFY_BASE_URL_ENV_VAR = "APIFY_BASE_URL"
 DEFAULT_APIFY_BASE_URL = "https://api.apify.com/v2"
 
 
+class ApifyError(Exception):
+    """Base exception for Apify-related operations."""
+
+
+class ApifyConfigError(ApifyError, ValueError):
+    """Raised when Apify configuration is missing or invalid."""
+
+
+class ApifyAPIError(ApifyError, RuntimeError):
+    """Raised when the Apify API returns an error."""
+
+
+def _clean_text(text: str) -> str:
+    """Clean corrupted unicode replacement characters and collapse whitespace."""
+    if not text:
+        return ""
+    # Replace unicode replacement characters or broken encodings with clean separator
+    cleaned = text.replace("\ufffd", " - ")
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def _coerce_string(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
     if isinstance(value, str):
-        return value.strip() or fallback
+        cleaned = _clean_text(value)
+        return cleaned or fallback
     if isinstance(value, (int, float)):
         return str(value)
-    return str(value).strip() or fallback
+    cleaned = _clean_text(str(value))
+    return cleaned or fallback
 
 
 def _extract_nested_text(value: Any, *keys: str) -> str:
@@ -54,7 +87,7 @@ def _normalize_stipend(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        return _coerce_string(value)
     if isinstance(value, dict):
         raw_value = _coerce_string(value.get("raw"))
         if raw_value:
@@ -108,7 +141,7 @@ def _normalize_duration(value: Any) -> str:
             return f"{int(numeric_value)} months"
         return f"{numeric_value:g} months"
     if isinstance(value, str):
-        text = value.strip()
+        text = _coerce_string(value)
         if not text:
             return ""
         if text.isdigit():
@@ -121,7 +154,8 @@ def _normalize_location(value: Any) -> str:
     if value is None:
         return "Remote"
     if isinstance(value, str):
-        return value.strip() or "Remote"
+        text = _coerce_string(value)
+        return text or "Remote"
     if isinstance(value, (list, tuple, set)):
         parts: list[str] = []
         for item in value:
@@ -144,21 +178,22 @@ def _normalize_skills(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        parts = [segment.strip() for segment in value.split(",")]
+        parts = [_clean_text(segment) for segment in value.split(",")]
         return [part for part in parts if part]
     if isinstance(value, (list, tuple, set)):
         flattened: list[str] = []
         for item in value:
             if isinstance(item, str):
-                item_value = item.strip()
-                if item_value:
+                item_value = _clean_text(item)
+                if item_value and item_value not in flattened:
                     flattened.append(item_value)
             elif isinstance(item, dict):
                 candidate = _extract_nested_text(item, "name", "skill", "title")
-                if candidate:
+                if candidate and candidate not in flattened:
                     flattened.append(candidate)
         return flattened
-    return [str(value).strip()] if str(value).strip() else []
+    text = _coerce_string(value)
+    return [text] if text else []
 
 
 def normalize_apify_record(raw_job: dict[str, Any]) -> dict[str, Any]:
@@ -179,19 +214,34 @@ def normalize_apify_record(raw_job: dict[str, Any]) -> dict[str, Any]:
         raw_job.get("title") or raw_job.get("jobTitle") or raw_job.get("name"),
         "Untitled Internship",
     )
+
     description = _coerce_string(
         raw_job.get("description")
         or raw_job.get("descriptionText")
         or raw_job.get("text")
         or raw_job.get("summary")
         or raw_job.get("snippet"),
-        "No description provided.",
+        "",
     )
+
+    # If description is empty, enrich from other available fields
+    if not description:
+        parts: list[str] = []
+        about_company = _coerce_string(raw_job.get("aboutCompany"))
+        who_can_apply = _coerce_string(raw_job.get("whoCanApply"))
+        if who_can_apply:
+            parts.append(f"Eligibility: {who_can_apply}")
+        if about_company:
+            parts.append(f"About: {about_company}")
+        description = " ".join(parts) if parts else "No description provided."
+
     work_mode = _coerce_string(raw_job.get("workMode"))
     if work_mode:
         description = (
-            f"{description.rstrip('.')}.") if description and description != "No description provided." else "No description provided."
-        description = f"{description} Work mode: {work_mode}." if description and "Work mode:" not in description else description
+            f"{description.rstrip('.')}." if description and description != "No description provided." else "No description provided."
+        )
+        if "Work mode:" not in description:
+            description = f"{description} Work mode: {work_mode}."
 
     apply_url = _coerce_string(
         raw_job.get("applyUrl")
@@ -200,12 +250,14 @@ def normalize_apify_record(raw_job: dict[str, Any]) -> dict[str, Any]:
         or raw_job.get("link"),
         "",
     )
+
     skills_required = _normalize_skills(
         raw_job.get("skills_required")
         or raw_job.get("skillsRequired")
         or raw_job.get("skills")
         or raw_job.get("requiredSkills")
     )
+
     job_type = _coerce_string(
         raw_job.get("recordType")
         or raw_job.get("jobType")
@@ -251,27 +303,43 @@ class ApifyScraper:
         api_token: str | None = None,
         dataset_id: str | None = None,
         base_url: str | None = None,
+        items: list[dict[str, Any]] | None = None,
     ) -> None:
         self.api_token = api_token or os.getenv(APIFY_API_TOKEN_ENV_VAR)
         self.dataset_id = dataset_id or os.getenv(APIFY_DATASET_ID_ENV_VAR)
         self.base_url = base_url or os.getenv(APIFY_BASE_URL_ENV_VAR, DEFAULT_APIFY_BASE_URL)
+        self._items = items
 
     def scraper(self) -> list[dict[str, Any]]:
         """Return raw internship dicts compatible with IngestionPipeline."""
+        if self._items is not None:
+            return [
+                normalize_apify_record(item)
+                for item in self._items
+                if isinstance(item, dict)
+            ]
+
         if not self.api_token:
-            raise ValueError(f"{APIFY_API_TOKEN_ENV_VAR} is required to access the Apify dataset.")
+            raise ApifyConfigError(f"{APIFY_API_TOKEN_ENV_VAR} is required to access the Apify dataset.")
         if not self.dataset_id:
-            raise ValueError(f"{APIFY_DATASET_ID_ENV_VAR} is required to access the Apify dataset.")
+            raise ApifyConfigError(f"{APIFY_DATASET_ID_ENV_VAR} is required to access the Apify dataset.")
 
         url = f"{self.base_url.rstrip('/')}/datasets/{self.dataset_id}/items"
-        response = httpx.get(
-            url,
-            params={"token": self.api_token, "clean": "true"},
-            timeout=30,
-        )
-        response.raise_for_status()
+        try:
+            response = httpx.get(
+                url,
+                params={"token": self.api_token, "clean": "true"},
+                timeout=30,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as err:
+            raise ApifyAPIError(f"Failed to fetch Apify dataset {self.dataset_id}: {err}") from err
 
-        raw_items = response.json()
+        try:
+            raw_items = response.json()
+        except Exception as err:
+            raise ApifyAPIError(f"Invalid JSON response from Apify: {err}") from err
+
         if not isinstance(raw_items, list):
             return []
 
